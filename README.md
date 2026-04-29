@@ -1,0 +1,6 @@
+This study was independently completed by Zhang Mingyu, a Master's student at the College of Civil Engineering, Nanjing Forestry University. Aiming at the engineering demand for high-precision prediction of the ring stiffness of Bamboo-Wound Composite Pipes (BWCP), the complete dataset and intelligent prediction GUI tool are open-sourced. The project mainly includes:
+A refined BWCP database of 181 specimens, consisting of original real-world data and CTGAN-augmented synthetic data;
+A machine learning-based prediction model, where CatBoost is determined as the optimal model after multi-model comparison, hyperparameter optimization, and five-fold cross-validation;
+A no-code visual GUI prediction interface integrated with the Robust standardization preprocessing pipeline, enabling rapid prediction of ring stiffness and corresponding SN class by directly inputting structural parameters;
+Open-sourced model weights, standardizer, test dataset, and full GUI source code, available for peer research reuse, engineering reference, and secondary development.
+Contact: For inquiries, academic exchanges, or collaboration on secondary development, please contact the author via email: zhangmingyu@njfu.edu.cn
