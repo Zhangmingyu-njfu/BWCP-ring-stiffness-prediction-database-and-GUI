@@ -1,0 +1,302 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from PIL import Image, ImageTk
+import numpy as np
+import pandas as pd
+import joblib
+from catboost import CatBoostRegressor
+import random
+
+# ===================== Core Configuration =====================
+model_path = r"D:\bwcp\12.11\WL-6-64R\3.MoXing\CatBoost优化最终版\GUI文件\bwcp_catboost_024_model.cbm"
+scaler_path = r"D:\bwcp\12.11\WL-6-64R\3.MoXing\CatBoost优化最终版\GUI文件\bwcp_catboost_024_scaler.pkl"
+data_path = r"D:\bwcp\12.11\WL-6-64R\3.MoXing\CatBoost优化最终版\GUI文件\bwcp_catboost_024_testdata.csv"
+
+best_model = CatBoostRegressor()
+best_model.load_model(model_path)
+scaler = joblib.load(scaler_path)
+data = pd.read_csv(data_path)
+
+
+tk_feature_names = ['t/D0', 'D0', 'Δy/D0', 'L/D0', 'EP']
+unit_dict = {
+    't/D0': '',
+    'D0': 'm',
+    'Δy/D0': '',
+    'L/D0': '',
+    'EP': 'MPa'
+}
+
+max_values = {
+    "t/D0": 0.5,
+    "D0": 10,
+    "Δy/D0": 0.5,
+    "L/D0": 10,
+    "EP": 10000
+}
+
+min_values = {
+    "t/D0": 0.01,
+    "D0": 0.01,
+    "Δy/D0": 0.001,
+    "L/D0": 0.001,
+    "EP": 100
+}
+
+# ===================== Functions =====================
+def fill_random_values():
+    random_row = data.sample(n=1).iloc[0]
+    for i, entry in enumerate(entries):
+        entry.delete(0, tk.END)
+        
+        if i == 0:
+            val = random_row['T/D0']
+        elif i == 2:
+            val = random_row['y/D0']
+        else:
+            val = random_row[tk_feature_names[i].replace('Δ','').replace('t','T')]
+            
+        if i in [0, 2, 3]:
+            entry.insert(0, f"{val:.4f}")
+        elif i == 1:
+            entry.insert(0, f"{val:.3f}")
+        else:
+            entry.insert(0, f"{val:.1f}")
+
+def validate_input():
+    try:
+        user_input = [float(entry.get()) for entry in entries]
+        input_dict = dict(zip(['T/D0','D0','y/D0','L/D0','EP'], user_input))
+        
+        if any(val < 0 for val in user_input):
+            raise ValueError("All parameters must be non-negative!")
+        
+        validate_dict = {
+            "t/D0": input_dict["T/D0"],
+            "D0": input_dict["D0"],
+            "Δy/D0": input_dict["y/D0"],
+            "L/D0": input_dict["L/D0"],
+            "EP": input_dict["EP"]
+        }
+        
+        for feature, max_val in max_values.items():
+            if validate_dict[feature] > max_val:
+                raise ValueError(f"{feature} max = {max_val} (current: {validate_dict[feature]})!")
+        
+        for feature, min_val in min_values.items():
+            if validate_dict[feature] < min_val:
+                raise ValueError(f"{feature} min = {min_val} (current: {validate_dict[feature]})!")
+        
+        return user_input
+    except ValueError as e:
+        messagebox.showerror("Input Error", str(e))
+        return None
+    except Exception as e:
+        messagebox.showerror("System Error", f"Failed to parse parameters: {str(e)}")
+        return None
+
+def predict():
+    user_input = validate_input()
+    if user_input is not None:
+        user_input_array = np.array(user_input).reshape(1, -1)
+        scaled_input = scaler.transform(user_input_array)
+        stiffness_value = best_model.predict(scaled_input)[0]
+        
+        t_D0, D0, y_D0, L_D0, EP = user_input
+        formula_stiffness = (
+            1.975 * (EP ** 1.150)
+            * (-11500 * np.sqrt(D0) + 26793)
+            * (1414 / (1 + np.exp(-39 * L_D0 + 143)) + 15304)
+            * (0.95 * 10**12 * (t_D0 ** 5.80) + 11663)
+            * (-89 * (y_D0 ** 15.15) + 17821 * 10**-17)
+        )
+
+        standard_sn_values = [5000, 10000, 15000, 20000]
+
+        model_sn_value = max([s for s in standard_sn_values if s <= stiffness_value], default=5000)
+        final_sn = f"SN{model_sn_value // 1000}"
+
+        formula_sn_value = max([s for s in standard_sn_values if s <= formula_stiffness], default=5000)
+        formula_final_sn = f"SN{formula_sn_value // 1000}"
+
+        final_sn_value = max(model_sn_value, formula_sn_value)
+        gb_sn = f"SN{final_sn_value // 1000}"
+
+        result_text = (
+            f"Predicted Ring Stiffness (ML Model): {stiffness_value:.2f} N/m²\n"
+            f"Corresponding SN Class (Model): {final_sn}\n"
+            "----------------------------------------\n"
+            f"Calculated Ring Stiffness (Formula): {formula_stiffness:.2f} N/m²\n"
+            f"Corresponding SN Class (Formula): {formula_final_sn}\n"
+            f"Recommended SN Class (Standard): {gb_sn}"
+        )
+        result_label.config(text=result_text, foreground="#2c3e50")
+
+# ===================== GUI Interface =====================
+root = tk.Tk()
+root.title("BWCP Ring Stiffness & SN Class Prediction Tool")
+root.geometry("1350x1000")
+root.resizable(True, True)
+root.configure(bg="#f8f9fa")
+
+# ------------------------ Style ------------------------
+style = ttk.Style(root)
+style.theme_use("clam")
+
+default_font = ("Arial", 10)
+title_font = ("Arial", 22, "bold")
+subtitle_font = ("Arial", 14, "bold")
+label_font = ("Arial", 11)
+result_font = ("Arial", 12)
+footer_font = ("Arial", 11, "bold")
+
+primary_color = "#2ecc71"
+secondary_color = "#34495e"
+light_color = "#ecf0f1"
+accent_color = "#e74c3c"
+
+style.configure("Card.TFrame", background="#ffffff", relief="raised", borderwidth=1)
+style.configure("Main.TFrame", background="#f8f9fa")
+style.configure("Footer.TFrame", background="#ffffff", relief="flat", borderwidth=0)
+
+style.configure("Primary.TButton",
+                background=primary_color,
+                foreground="white",
+                font=("Arial", 11, "bold"),
+                padding=8,
+                borderwidth=0,
+                relief="flat")
+style.map("Primary.TButton",
+          background=[("active", "#27ae60"), ("pressed", "#27ae60")])
+
+style.configure("Secondary.TButton",
+                background=light_color,
+                foreground=secondary_color,
+                font=("Arial", 10),
+                padding=6,
+                borderwidth=1,
+                relief="flat")
+style.map("Secondary.TButton",
+          background=[("active", "#e0e0e0"), ("pressed", "#e0e0e0")])
+
+style.configure("Input.TEntry",
+                font=default_font,
+                padding=6,
+                borderwidth=1,
+                relief="solid")
+style.map("Input.TEntry",
+          fieldbackground=[("focus", "#ffffff")],
+          bordercolor=[("focus", primary_color)])
+
+style.configure("Title.TLabel", font=title_font, foreground=secondary_color, background="#f8f9fa")
+style.configure("Subtitle.TLabel", font=subtitle_font, foreground=secondary_color, background="#ffffff")
+style.configure("Label.TLabel", font=label_font, foreground=secondary_color, background="#ffffff")
+style.configure("Note.TLabel", font=("Arial", 10), foreground="#7f8c8d", background="#ffffff")
+style.configure("Footer.TLabel", font=footer_font, foreground=secondary_color, background="#ffffff")
+
+# ------------------------ Layout ------------------------
+title_frame = ttk.Frame(root, style="Card.TFrame", padding=15)
+title_frame.pack(fill="x", padx=20, pady=15)
+title_label = ttk.Label(title_frame, text="BWCP Ring Stiffness Intelligent Prediction Tool", style="Title.TLabel")
+title_label.pack()
+
+content_frame = ttk.Frame(root, style="Main.TFrame", padding=10)
+content_frame.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+content_frame.grid_columnconfigure(0, weight=2)
+content_frame.grid_columnconfigure(1, weight=1)
+content_frame.grid_rowconfigure(0, weight=1)
+
+# Left Input Panel
+left_frame = ttk.Frame(content_frame, style="Card.TFrame", padding=20)
+left_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
+subtitle_label = ttk.Label(left_frame, text="Input Parameters", style="Subtitle.TLabel")
+subtitle_label.pack(anchor="w", pady=(0, 15))
+
+random_button = ttk.Button(left_frame, text="🎲 Random Fill", command=fill_random_values, style="Secondary.TButton")
+random_button.pack(anchor="w", pady=(0, 15))
+
+input_frame = ttk.Frame(left_frame, style="Card.TFrame")
+input_frame.pack(fill="x")
+
+entries = []
+for i, feature in enumerate(tk_feature_names):
+    unit = unit_dict[feature]
+    label_text = f"{feature} ({unit})" if unit else feature
+    
+    ttk.Label(input_frame, text=label_text, style="Label.TLabel").grid(row=i, column=0, sticky="w", pady=8, padx=(0, 15))
+    entry = ttk.Entry(input_frame, style="Input.TEntry", width=20)
+    entry.grid(row=i, column=1, sticky="ew", pady=8)
+    entries.append(entry)
+
+input_frame.grid_columnconfigure(1, weight=1)
+
+predict_button = ttk.Button(left_frame, text="🚀 Predict SN & Ring Stiffness", command=predict, style="Primary.TButton")
+predict_button.pack(fill="x", pady=(20, 15))
+
+result_label = tk.Label(left_frame, text="", 
+                        font=result_font,
+                        bg="#f0f8ff", 
+                        fg="#2c3e50",
+                        relief="solid", 
+                        borderwidth=1,
+                        padx=15, 
+                        pady=15, 
+                        justify="left", 
+                        wraplength=400)
+result_label.pack(fill="both", expand=True, pady=(0, 10))
+
+# Right Info Panel
+right_frame = ttk.Frame(content_frame, style="Card.TFrame", padding=20)
+right_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+
+note_title = ttk.Label(right_frame, text="📋 Parameter Description & Test Diagram", style="Subtitle.TLabel")
+note_title.pack(anchor="w", pady=(0, 15))
+
+image_frame = ttk.Frame(right_frame, style="Card.TFrame", padding=10)
+image_frame.pack(fill="both", expand=True, pady=(0, 15))
+
+try:
+    test_img = Image.open(r"D:\bwcp\12.11\bwcp3.png")
+    test_img.thumbnail((550, 400), Image.Resampling.LANCZOS)
+    test_photo = ImageTk.PhotoImage(test_img)
+    image_label = tk.Label(image_frame, image=test_photo, bg="#ffffff")
+    image_label.image = test_photo
+    image_label.pack(anchor="center", expand=True)
+except Exception as e:
+    image_label = tk.Label(image_frame, text=f"Failed to load image\nError: {str(e)}", 
+                          font=("Arial", 12), fg=accent_color, bg="#ffffff",
+                          padx=20, pady=20)
+    image_label.pack(fill="both", expand=True)
+
+note_text = (
+    "1.  t/D0: Wall thickness / nominal diameter (dimensionless)\n"
+    "2.  D0: Nominal diameter (m)\n"
+    "3.  Δy/D0: Radial deformation / nominal diameter (dimensionless)\n"
+    "4.  L/D0: Pipe length / nominal diameter (dimensionless)\n"
+    "5.  EP: Elastic modulus (MPa)\n\n"
+    "📌 SN Class (GB/T 37805-2019):\n"
+    "BWCP stiffness classes: 5000 N/m² (SN5), 10000 N/m² (SN10), 15000 N/m² (SN15), 20000 N/m² (SN20).\n"
+    "Non-standard pipes can be designed using the ring stiffness formula."
+)
+note_label = tk.Label(right_frame, text=note_text, 
+                      font=("Arial", 13),
+                      bg="#f8f9fa", 
+                      fg="#7f8c8d",
+                      relief="solid", 
+                      borderwidth=1,
+                      padx=15, 
+                      pady=15, 
+                      justify="left", 
+                      wraplength=550)
+note_label.pack(fill="both", expand=True)
+
+# Footer
+footer_frame = ttk.Frame(root, style="Footer.TFrame", padding=10)
+footer_frame.pack(fill="x", padx=20, pady=(10, 20))
+footer_label = ttk.Label(footer_frame, text="College of Civil Engineering, Nanjing Forestry University - BWCP Research Group",
+                         style="Footer.TLabel")
+footer_label.pack()
+
+fill_random_values()
+root.mainloop()
